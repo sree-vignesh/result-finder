@@ -1,23 +1,6 @@
-const express = require("express");
 const axios = require("axios");
 const https = require("https");
-const cors = require("cors");
-const bodyParser = require("body-parser");
 
-const app = express();
-const PORT = 3000;
-
-// Middleware
-app.use(
-  cors({
-    origin: "*", // Allow all origins (or specify frontend URL)
-    methods: "GET,POST",
-    allowedHeaders: "Content-Type",
-  })
-); // Enable CORS for all requests
-app.use(bodyParser.json()); // Parse JSON request bodies
-
-// Axios Client
 const apiClient = axios.create({
   baseURL: "http://rajalakshmi.in",
   headers: {
@@ -29,13 +12,13 @@ const apiClient = axios.create({
     Origin: "http://rajalakshmi.in",
     Referer: "http://rajalakshmi.in/UI/Modules/Login/UniLogin.aspx",
   },
-  httpsAgent: new https.Agent({ rejectUnauthorized: false }), // Bypass SSL issues
+  httpsAgent: new https.Agent({ rejectUnauthorized: false }), // Bypass SSL issues if any
 });
 
-// Grade Mapping
+// Grade point mapping
 const gradePoints = { O: 10, "A+": 9, A: 8, "B+": 7, B: 6, C: 5, P: 4, U: 0 };
 
-// Function to Login & Get Session
+// Function to log in and get a session ID
 async function loginAndGetSession(rollNumber) {
   try {
     const loginData = {
@@ -47,6 +30,7 @@ async function loginAndGetSession(rollNumber) {
       "/UI/Modules/Login/UniLogin.aspx/VlidateUser",
       loginData
     );
+
     const setCookieHeader = response.headers["set-cookie"];
     if (!setCookieHeader) throw new Error("Failed to retrieve session cookie");
 
@@ -55,14 +39,14 @@ async function loginAndGetSession(rollNumber) {
     );
     if (!sessionCookie) throw new Error("Session ID not found in cookies");
 
-    return sessionCookie.split(";")[0];
+    return sessionCookie.split(";")[0]; // Extract session ID
   } catch (error) {
-    throw new Error(`Login failed: ${error.message}`);
+    return null; // Return null if login fails
   }
 }
 
-// Function to Fetch Results
-async function fetchResults(sessionId) {
+// Function to fetch results and calculate GPA
+async function fetchResults(rollNumber, sessionId) {
   try {
     const resultData = {
       AcademicYearId: 0,
@@ -83,20 +67,15 @@ async function fetchResults(sessionId) {
       }
     );
 
-    if (!response.data || !response.data.d) {
-      throw new Error("No valid results found!");
-    }
+    if (!response.data || !response.data.d) return null;
 
     const resultJson = JSON.parse(response.data.d);
-
-    if (!Array.isArray(resultJson) || resultJson.length === 0) {
-      throw new Error("Results data is empty or incorrect format!");
-    }
+    if (!Array.isArray(resultJson) || resultJson.length === 0) return null;
 
     let totalCredits = 0,
       totalGradePoints = 0;
 
-    const results = resultJson.map((result) => {
+    resultJson.forEach((result) => {
       const grade = result.Grade || "NA";
       const credits = result.CREDITS || 0;
 
@@ -104,47 +83,36 @@ async function fetchResults(sessionId) {
         totalCredits += credits;
         totalGradePoints += gradePoints[grade] * credits;
       }
-
-      return {
-        subjectCode: result.Code || "Unknown Code",
-        subjectName: result.Subject || "Unknown Subject",
-        grade,
-        credits,
-        status: result.Result || "NA",
-      };
     });
 
-    const GPA =
-      totalCredits > 0 ? (totalGradePoints / totalCredits).toFixed(2) : "N/A";
-
-    return { results, GPA };
+    return totalCredits > 0
+      ? (totalGradePoints / totalCredits).toFixed(2)
+      : "N/A";
   } catch (error) {
-    throw new Error(`Failed to fetch results: ${error.message}`);
+    return null; // Return null if fetching results fails
   }
 }
 
-// API Route to Get Results
-app.post("/getResults", async (req, res) => {
-  const { rollNumber } = req.body;
+// Main function to process multiple students
+async function processStudents(startRollNumber, range) {
+  console.log(`\n📊 GPA Results:\n`);
 
-  if (!rollNumber) {
-    return res.status(400).json({ error: "Roll number is required" });
-  }
+  for (let i = 0; i < range; i++) {
+    let rollNumber = (startRollNumber + i).toString();
 
-  try {
     const sessionId = await loginAndGetSession(rollNumber);
-    const resultData = await fetchResults(sessionId);
+    if (!sessionId) {
+      console.log(`${rollNumber} : Login Failed`);
+      continue;
+    }
 
-    res.json({
-      rollNumber,
-      ...resultData,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+    const GPA = await fetchResults(rollNumber, sessionId);
+    console.log(`${rollNumber} : ${GPA !== null ? GPA : "No Data"}`);
   }
-});
+}
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
-});
+// Usage example
+const startRollNumber = 211001001; // Change this
+const range = 140; // Change this to the number of students to process
+
+processStudents(startRollNumber, range);
